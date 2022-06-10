@@ -189,7 +189,7 @@ func Blockchain_Start(params map[string]interface{}) (*Blockchain, error) {
 	chain.RPC_NotifyHeightChanged = sync.NewCond(&sync.Mutex{}) // used by dero daemon to notify all websockets that chain height has changed
 	chain.RPC_NotifyNewMiniBlock = sync.NewCond(&sync.Mutex{})  // used by dero daemon to notify all websockets that new miniblock has arrived
 
-	if !chain.Store.IsBalancesIntialized() {
+	if chain.Store.Topo_store.Count() == 0 && !chain.Store.IsBalancesIntialized() {
 		logger.Info("Genesis block not in store, add it now")
 		var complete_block block.Complete_Block
 		bl := Generate_Genesis_Block()
@@ -204,6 +204,21 @@ func Blockchain_Start(params map[string]interface{}) (*Blockchain, error) {
 	init_hard_forks(params) // hard forks must be initialized asap
 
 	chain.Initialise_Chain_From_DB() // load the chain from the disk
+
+try_again:
+	version, err := chain.ReadBlockSnapshotVersion(chain.Get_Top_ID())
+	if err != nil {
+		chain.Rewind_Chain(1) // rewind 1 block
+		goto try_again
+	}
+	// this case happens when chain syncs from rsync and if rsync takes more time than block_time
+	// basically this can also be fixed, if topo.map file is renamed to name starting with 'a'
+	// it should be the first file to be synced, but instead of renaming file as fix
+	// we are fixing it by checking how much we have progressed and skip those block
+	if _, err = chain.Load_Merkle_Hash(version); err != nil {
+		chain.Rewind_Chain(1) // rewind 1 block
+		goto try_again
+	}
 
 	if chain.Pruned >= 1 {
 		logger.Info("Chain Pruned till", "topoheight", chain.Pruned)
@@ -441,7 +456,7 @@ func (chain *Blockchain) Add_Complete_Block(cbl *block.Complete_Block) (err erro
 			}
 
 		} else {
-
+			logger.V(1).Error(err, "Block rejected by chain", "BLID", block_hash, "bl", fmt.Sprintf("%x", bl.Serialize()), "stack", debug.Stack())
 			logger.V(1).Error(err, "Block rejected by chain", "BLID", block_hash)
 		}
 	}()
@@ -458,6 +473,16 @@ func (chain *Blockchain) Add_Complete_Block(cbl *block.Complete_Block) (err erro
 	for k := range chain.Tips {
 		if block_hash == k {
 			return errormsg.ErrAlreadyExists, false // block already in chain skipping it
+		}
+	}
+
+	if bl.Height > uint64(chain.Get_Height()+2) {
+		return fmt.Errorf("advance Block"), false // block in future skipping it
+	}
+
+	if bl.Height > uint64(config.STABLE_LIMIT) {
+		if bl.Height < uint64(chain.Get_Height()-config.STABLE_LIMIT) {
+			return fmt.Errorf("previous Block"), false // block in past skipping it
 		}
 	}
 

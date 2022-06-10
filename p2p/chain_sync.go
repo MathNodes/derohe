@@ -119,6 +119,9 @@ func (connection *Connection) sync_chain() {
 
 try_again:
 
+	request = Chain_Request_Struct{}
+	response = Chain_Response_Struct{}
+
 	// send our blocks, first 10 blocks directly, then decreasing in powers of 2
 	start_point := chain.Load_TOPO_HEIGHT()
 	for i := int64(0); i < start_point; {
@@ -169,16 +172,17 @@ try_again:
 		connection.logger.V(3).Info("rewinding status", "our topoheight", chain.Load_TOPO_HEIGHT(), "peer topoheight", response.Start_topoheight)
 		pop_count := chain.Load_TOPO_HEIGHT() - response.Start_topoheight
 		chain.Rewind_Chain(int(pop_count)) // pop as many blocks as necessary
+		pop_count = 0
 
 		// we should NOT queue blocks, instead we sent our chain request again
 		goto try_again
 
-	} else if chain.Get_Height()-response.Common.Height != 0 && chain.Get_Height()-response.Start_height <= config.STABLE_LIMIT {
+	} else if chain.Get_Height()-response.Common.Height >= 0 && chain.Get_Height()-response.Start_height <= config.STABLE_LIMIT {
 		pop_count = chain.Load_TOPO_HEIGHT() - response.Start_topoheight
-	} else if chain.Get_Height() < connection.Height && chain.Get_Height()-response.Start_height > config.STABLE_LIMIT { // we must somehow notify that deviation is way too much and manual interaction is necessary, so as any bug for chain deviationmay be detected
-		//connection.logger.V(1).Error(nil, "we have or others have deviated too much.you may have to use --sync-node option", "our topoheight", chain.Load_TOPO_HEIGHT(), "peer topoheight start", response.Start_topoheight)
-		//return
-		pop_count = chain.Load_TOPO_HEIGHT() - response.Start_topoheight
+	} else if chain.Get_Height()-response.Start_height > config.STABLE_LIMIT { // we must somehow notify that deviation is way too much and manual interaction is necessary, so as any bug for chain deviationmay be detected
+		connection.logger.V(1).Error(nil, "we have or others have deviated too much.you may have to use --sync-node option", "our topoheight", chain.Load_TOPO_HEIGHT(), "peer topoheight start", response.Start_topoheight)
+		return
+		//pop_count = chain.Load_TOPO_HEIGHT() - response.Start_topoheight
 	}
 
 	if pop_count >= 1 { // peer is claiming his chain is good and we should rewind
@@ -247,8 +251,8 @@ try_again:
 		return
 	}
 
-	// response only 128 blocks at a time
-	max_blocks_to_queue := 128
+	// response only 4096 blocks at a time
+	max_blocks_to_queue := 4096
 	// check whether the objects are in our db or not
 	// until we put in place a parallel object tracker, do it one at a time
 

@@ -278,53 +278,57 @@ func main() {
 				return
 			default:
 			}
-			our_height := chain.Get_Height()
-			best_height, best_topo_height := p2p.Best_Peer_Height()
-			peer_count := p2p.Peer_Count()
-			topo_height := chain.Load_TOPO_HEIGHT()
 
-			mempool_tx_count := len(chain.Mempool.Mempool_List_TX())
-			regpool_tx_count := len(chain.Regpool.Regpool_List_TX())
+			func() {
+				defer globals.Recover(0) // a panic might occur, due to some rare file system issues, so skip them
+				our_height := chain.Get_Height()
+				best_height, best_topo_height := p2p.Best_Peer_Height()
+				peer_count := p2p.Peer_Count()
+				topo_height := chain.Load_TOPO_HEIGHT()
 
-			// only update prompt if needed
-			if last_second != time.Now().Unix() || last_our_height != our_height || last_best_height != best_height || last_peer_count != peer_count || last_topo_height != topo_height || last_mempool_tx_count != mempool_tx_count || last_regpool_tx_count != regpool_tx_count {
-				// choose color based on urgency
-				color := "\033[32m" // default is green color
-				if our_height < best_height {
-					color = "\033[33m" // make prompt yellow
-				} else if our_height > best_height {
-					color = "\033[31m" // make prompt red
+				mempool_tx_count := len(chain.Mempool.Mempool_List_TX())
+				regpool_tx_count := len(chain.Regpool.Regpool_List_TX())
+
+				// only update prompt if needed
+				if last_second != time.Now().Unix() || last_our_height != our_height || last_best_height != best_height || last_peer_count != peer_count || last_topo_height != topo_height || last_mempool_tx_count != mempool_tx_count || last_regpool_tx_count != regpool_tx_count {
+					// choose color based on urgency
+					color := "\033[32m" // default is green color
+					if our_height < best_height {
+						color = "\033[33m" // make prompt yellow
+					} else if our_height > best_height {
+						color = "\033[31m" // make prompt red
+					}
+
+					pcolor := "\033[32m" // default is green color
+					if peer_count < 1 {
+						pcolor = "\033[31m" // make prompt red
+					} else if peer_count <= 8 {
+						pcolor = "\033[33m" // make prompt yellow
+					}
+
+					hash_rate_string := hashratetostring(chain.Get_Network_HashRate())
+
+					testnet_string := ""
+					if globals.IsMainnet() {
+						testnet_string = "\033[31m MAINNET"
+					} else {
+						testnet_string = "\033[31m TESTNET"
+					}
+
+					testnet_string += " " + strconv.Itoa(chain.MiniBlocks.Count()) + " " + globals.GetOffset().Round(time.Millisecond).String() + "|" + globals.GetOffsetNTP().Round(time.Millisecond).String() + "|" + globals.GetOffsetP2P().Round(time.Millisecond).String()
+
+					miner_count := derodrpc.CountMiners()
+					l.SetPrompt(fmt.Sprintf("\033[1m\033[32mDERO HE: \033[0m"+color+"%d/%d [%d/%d] "+pcolor+"P %d TXp %d:%d \033[32mNW %s >MN %d %s>>\033[0m ", our_height, topo_height, best_height, best_topo_height, peer_count, mempool_tx_count, regpool_tx_count, hash_rate_string, miner_count, testnet_string))
+					l.Refresh()
+					last_second = time.Now().Unix()
+					last_our_height = our_height
+					last_best_height = best_height
+					last_peer_count = peer_count
+					last_mempool_tx_count = mempool_tx_count
+					last_regpool_tx_count = regpool_tx_count
+					last_topo_height = best_topo_height
 				}
-
-				pcolor := "\033[32m" // default is green color
-				if peer_count < 1 {
-					pcolor = "\033[31m" // make prompt red
-				} else if peer_count <= 8 {
-					pcolor = "\033[33m" // make prompt yellow
-				}
-
-				hash_rate_string := hashratetostring(chain.Get_Network_HashRate())
-
-				testnet_string := ""
-				if globals.IsMainnet() {
-					testnet_string = "\033[31m MAINNET"
-				} else {
-					testnet_string = "\033[31m TESTNET"
-				}
-
-				testnet_string += " " + strconv.Itoa(chain.MiniBlocks.Count()) + " " + globals.GetOffset().Round(time.Millisecond).String() + "|" + globals.GetOffsetNTP().Round(time.Millisecond).String() + "|" + globals.GetOffsetP2P().Round(time.Millisecond).String()
-
-				miner_count := derodrpc.CountMiners()
-				l.SetPrompt(fmt.Sprintf("\033[1m\033[32mDERO HE: \033[0m"+color+"%d/%d [%d/%d] "+pcolor+"P %d TXp %d:%d \033[32mNW %s >MN %d %s>>\033[0m ", our_height, topo_height, best_height, best_topo_height, peer_count, mempool_tx_count, regpool_tx_count, hash_rate_string, miner_count, testnet_string))
-				l.Refresh()
-				last_second = time.Now().Unix()
-				last_our_height = our_height
-				last_best_height = best_height
-				last_peer_count = peer_count
-				last_mempool_tx_count = mempool_tx_count
-				last_regpool_tx_count = regpool_tx_count
-				last_topo_height = best_topo_height
-			}
+			}()
 			time.Sleep(1 * time.Second)
 		}
 	}()
@@ -513,7 +517,6 @@ restart_loop:
 				logger.Info("\n")
 
 			}
-
 		case command == "regpool_print":
 			chain.Regpool.Regpool_Print()
 
@@ -724,8 +727,24 @@ restart_loop:
 			bl, err := chain.Load_BL_FROM_ID(hash)
 			if err != nil {
 				fmt.Printf("Err %s\n", err)
+				continue
 			}
-			fmt.Printf("%s\n", bl.String())
+
+			header, _ := derodrpc.GetBlockHeader(chain, hash)
+			fmt.Fprintf(os.Stdout, "BLID:%s\n", bl.GetHash())
+			fmt.Fprintf(os.Stdout, "Major version:%d Minor version: %d ", bl.Major_Version, bl.Minor_Version)
+			fmt.Fprintf(os.Stdout, "Height:%d ", bl.Height)
+			fmt.Fprintf(os.Stdout, "Timestamp:%d  (%s)\n", bl.Timestamp, bl.GetTimestamp())
+			for i := range bl.Tips {
+				fmt.Fprintf(os.Stdout, "Past %d:%s\n", i, bl.Tips[i])
+			}
+			for i, mbl := range bl.MiniBlocks {
+				fmt.Fprintf(os.Stdout, "Mini %d:%s %s\n", i, mbl, header.Miners[i])
+			}
+			for i, txid := range bl.Tx_hashes {
+				fmt.Fprintf(os.Stdout, "tx %d:%s\n", i, txid)
+			}
+
 			fmt.Printf("difficulty: %s\n", chain.Load_Block_Difficulty(hash).String())
 			fmt.Printf("TopoHeight: %d\n", chain.Load_Block_Topological_order(hash))
 
@@ -836,11 +855,23 @@ restart_loop:
 
 			supply = (config.PREMINE + blockchain.CalcBlockReward(uint64(chain.Get_Height()))*uint64(chain.Get_Height())) // valid for few years
 
+			hostname, _ := os.Hostname()
+			fmt.Printf("STATUS MENU for DERO HE Node - Hostname: %s\n\n", hostname)
+			fmt.Printf("Hostname: %s - Uptime: %s\n", hostname, time.Now().Sub(globals.StartTime).Round(time.Second).String())
+			fmt.Printf("Uptime Since: %s\n\n", globals.StartTime.Format(time.RFC1123))
+
 			fmt.Printf("Network %s Height %d  NW Hashrate %0.03f MH/sec  Peers %d inc, %d out  MEMPOOL size %d REGPOOL %d  Total Supply %s DERO \n", globals.Config.Name, chain.Get_Height(), float64(chain.Get_Network_HashRate())/1000000.0, inc, out, mempool_tx_count, regpool_tx_count, globals.FormatMoney(supply))
+
+			tips := chain.Get_TIPS()
+			fmt.Printf("Tips ")
+			for _, tip := range tips {
+				fmt.Printf(" %s(%d)", tip, chain.Load_Height_for_BL_ID(tip))
+			}
+
 			if chain.LocatePruneTopo() >= 1 {
-				fmt.Printf("Chain is pruned till %d\n", chain.LocatePruneTopo())
+				fmt.Printf("\nChain is pruned till %d\n", chain.LocatePruneTopo())
 			} else {
-				fmt.Printf("Chain is in full mode.\n")
+				fmt.Printf("\nChain is in full mode.\n")
 			}
 			fmt.Printf("Integrator address %s\n", chain.IntegratorAddress().String())
 			fmt.Printf("UTC time %s  (as per system clock) \n", time.Now().UTC())
@@ -848,22 +879,30 @@ restart_loop:
 			fmt.Printf("Local time %s  (as per system clock) \n", time.Now())
 			fmt.Printf("Local time %s  (offset %s) (as per daemon) should be close to 0\n", globals.Time(), time.Now().Sub(globals.Time()))
 
+			fmt.Print("\nPeer Stats:\n")
+			fmt.Printf("\tPeer ID: %d\n", p2p.GetPeerID())
+
+			blocksMined := (derodrpc.CountMinisAccepted + derodrpc.CountBlocks) - derodrpc.CountMinisRejected
+			fmt.Print("\nMining Stats:\n")
+			fmt.Printf("\tBlock Minted: %d (MB+IB)\n", (derodrpc.CountMinisAccepted+derodrpc.CountBlocks)-derodrpc.CountMinisRejected)
+			if blocksMined > 0 {
+				fmt.Printf("\tMinting Velocity: %.4f MB/h\t%.4f MB/d (since uptime)\n", float64(float64(derodrpc.CountMinisAccepted)/time.Now().Sub(globals.StartTime).Seconds())*3600,
+					float64(float64(derodrpc.CountMinisAccepted)/time.Now().Sub(globals.StartTime).Seconds())*3600*24)
+			} else {
+				fmt.Print("\tMinting Velocity: 0.0000 MB/h\t0.0000MB/d (since uptime)\n")
+			}
 			//if derodrpc.CountMiners() > 0 { // only give info if we have a miner connected
-			fmt.Printf("MB:%d MBR:%d IB:%d\n", derodrpc.CountMinisAccepted, derodrpc.CountMinisRejected, derodrpc.CountBlocks)
-			fmt.Printf("MB %.02f%%(1hr) %.05f%%(1d) %.06f%%(7d) (Moving average %%, will be 0 if no miniblock found)\n", derodrpc.HashrateEstimatePercent_1hr(), derodrpc.HashrateEstimatePercent_1day(), derodrpc.HashrateEstimatePercent_7day())
+			fmt.Printf("\tMB:%d MBR:%d IB:%d\n", derodrpc.CountMinisAccepted, derodrpc.CountMinisRejected, derodrpc.CountBlocks)
+			fmt.Printf("\tMB %.02f%%(1hr)\t%.05f%%(1d)\t%.06f%%(7d)\t(Moving average %%, will be 0 if no miniblock found)\n", derodrpc.HashrateEstimatePercent_1hr(), derodrpc.HashrateEstimatePercent_1day(), derodrpc.HashrateEstimatePercent_7day())
 			mh_1hr := uint64((float64(chain.Get_Network_HashRate()) * derodrpc.HashrateEstimatePercent_1hr()) / 100)
 			mh_1d := uint64((float64(chain.Get_Network_HashRate()) * derodrpc.HashrateEstimatePercent_1day()) / 100)
 			mh_7d := uint64((float64(chain.Get_Network_HashRate()) * derodrpc.HashrateEstimatePercent_7day()) / 100)
-			fmt.Printf("Avg Mining HR %s(1hr) %s(1d) %s(7d)\n", hashratetostring(mh_1hr), hashratetostring(mh_1d), hashratetostring(mh_7d))
+			fmt.Printf("\tAvg Mining HR %s(1hr)\t%s(1d)\t%s(7d)\n", hashratetostring(mh_1hr), hashratetostring(mh_1d), hashratetostring(mh_7d))
 			//}
 
-			tips := chain.Get_TIPS()
-			fmt.Printf("Tips ")
-			for _, tip := range tips {
-				fmt.Printf(" %s(%d)", tip, chain.Load_Height_for_BL_ID(tip))
-			}
 			fmt.Printf("\n")
 			fmt.Printf("Current Block Reward: %s\n", globals.FormatMoney(blockchain.CalcBlockReward(uint64(chain.Get_Height()))))
+			fmt.Printf("\n")
 
 			// print hardfork status on second line
 			hf_state, _, _, threshold, version, votes, window := chain.Get_HF_info()

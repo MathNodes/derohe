@@ -120,6 +120,14 @@ func P2P_Init(params map[string]interface{}) error {
 		logger.Info("", "BW_FACTOR", bw_factor)
 	}
 
+	if os.Getenv("UDP_READ_BUF_CONN") != "" {
+		size, _ := strconv.Atoi(os.Getenv("UDP_READ_BUF_CONN"))
+		if size <= 64*1024 {
+			size = 64 * 1024
+		}
+		logger.Info("", "UDP_READ_BUF_CONN", size)
+	}
+
 	// permanently unban any seed nodes
 	if globals.IsMainnet() {
 		for i := range config.Mainnet_seed_nodes {
@@ -242,7 +250,12 @@ func P2P_engine() {
 
 	// do not create connections to peers , if requested
 	if _, ok := globals.Arguments["--add-exclusive-node"]; ok && len(globals.Arguments["--add-exclusive-node"].([]string)) == 0 { // check if parameter is supported
-		go maintain_connection_to_peers()  // maintain certain number of  connections for peer to peers
+		go maintain_connection_to_peers() // maintain certain number of connections for peer to peers
+
+		// skip any connections, to allow more testing in closed environments
+		if os.Getenv("SKIP_SEED_NODES") != "" {
+			return
+		}
 		go maintain_seed_node_connection() // maintain connection with atleast 1 seed node
 
 		// this code only triggers when we do not have peer list
@@ -270,6 +283,20 @@ func tunekcp(conn *kcp.UDPSession) {
 		conn.SetNoDelay(1, 10, 2, 1) // tuning paramters for local stack for fast retransmission stack
 	} else {
 		conn.SetNoDelay(0, 40, 0, 0) // tuning paramters for local
+	}
+
+	size := 1 * 1024 * 1024 // set the buffer size max possible upto 1 MB, default is 1 MB
+	if os.Getenv("UDP_READ_BUF_CONN") != "" {
+		size, _ = strconv.Atoi(os.Getenv("UDP_READ_BUF_CONN"))
+		if size <= 64*1024 {
+			size = 64 * 1024
+		}
+	}
+	for size >= 64*1024 {
+		if err := conn.SetReadBuffer(size); err == nil {
+			break
+		}
+		size = size - (64 * 1024)
 	}
 }
 
@@ -617,7 +644,7 @@ func getc(client *rpc2.Client) *Connection {
 	if ci, found := client.State.Get("c"); found {
 		return ci.(*Connection)
 	} else {
-		panic("no connection attached")
+		//panic("no connection attached") // automatically handled by higher layers
 		return nil
 	}
 }
